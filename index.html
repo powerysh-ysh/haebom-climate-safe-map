@@ -108,12 +108,17 @@
       const statusHtml = open === null ? '' :
         `<span class="status ${open ? 'open' : 'closed'}">${open ? '● 이용 가능' : '● 운영 종료'}</span>`;
 
+      const verifiedBadge = p.verified
+        ? '<span class="badge" style="background:#1f8a4c">✓ 실데이터(PoC)</span>'
+        : '<span class="badge" style="background:#999">예시 데이터</span>';
+
       const card = document.createElement('div');
       card.className = 'card';
       card.style.borderLeftColor = meta.color;
       card.innerHTML = `
         <h3>${meta.icon} ${p.name} <span class="badge" style="background:${meta.color}">${meta.label}</span>${statusHtml}</h3>
-        <p class="meta">운영시간 ${p.hours} · ${p.address}</p>
+        <p class="meta">${verifiedBadge}</p>
+        <p class="meta">운영시간 ${p.hours} · ${p.address}${p.phone ? ' · ' + p.phone : ''}</p>
         <div class="tags">${(p.amenities || []).map(a => `<span class="tag">✓ ${a}</span>`).join('')}</div>
         <a class="btn" href="#" data-place="${p.id}">길찾기 →</a>
         <p class="source">출처: ${p.source || '-'}</p>
