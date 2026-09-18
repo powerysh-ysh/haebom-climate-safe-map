@@ -76,7 +76,8 @@
   let activeCategory = 'all';
 
   function isOpenNow(hours) {
-    if (!hours || hours.includes('24시간')) return true;
+    if (!hours) return null;
+    if (hours.includes('24시간')) return true;
     const m = hours.match(/(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})/);
     if (!m) return null;
     const now = new Date();
@@ -118,7 +119,7 @@
       card.innerHTML = `
         <h3>${meta.icon} ${p.name} <span class="badge" style="background:${meta.color}">${meta.label}</span>${statusHtml}</h3>
         <p class="meta">${verifiedBadge}</p>
-        <p class="meta">운영시간 ${p.hours} · ${p.address}${p.phone ? ' · ' + p.phone : ''}</p>
+        <p class="meta">${p.hours ? '운영시간 ' + p.hours + ' · ' : ''}${p.address}${p.phone ? ' · ' + p.phone : ''}</p>
         <div class="tags">${(p.amenities || []).map(a => `<span class="tag">✓ ${a}</span>`).join('')}</div>
         <a class="btn" href="#" data-place="${p.id}">길찾기 →</a>
         <p class="source">출처: ${p.source || '-'}</p>
