@@ -17,7 +17,8 @@
   .filters{display:flex;gap:8px;padding:10px 16px;background:#fff;border-bottom:1px solid #e3e6e2;overflow-x:auto;}
   .chip{flex:none;font-size:.78rem;padding:6px 12px;border-radius:999px;border:1px solid #d7ddd8;background:#fff;cursor:pointer;white-space:nowrap;}
   .chip.active{background:var(--ink);color:#fff;border-color:var(--ink);}
-  #map{height:44vh;width:100%;background:#dbe7dd;}
+  #map{height:44vh;width:100%;background:#dbe7dd;position:relative;}
+  #kakaoMap{width:100%;height:100%;display:none;}
   .list{padding:12px 16px 80px;}
   .card{background:var(--card);border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);border-left:6px solid var(--blue);}
   .card h3{margin:0 0 6px;font-size:1rem;display:flex;align-items:center;gap:8px;}
@@ -26,9 +27,11 @@
   .status.open{color:var(--green);}
   .status.closed{color:var(--red);}
   .meta{font-size:.82rem;color:var(--muted);margin:2px 0;}
+  .note{font-size:.76rem;color:var(--amber);margin:4px 0;background:#fff7e8;padding:4px 8px;border-radius:6px;}
   .tags{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;}
   .tag{font-size:.72rem;background:#eef3ee;color:#33443a;padding:3px 8px;border-radius:8px;}
-  .btn{display:inline-block;margin-top:10px;font-size:.82rem;color:#fff;background:var(--ink);padding:7px 12px;border-radius:8px;text-decoration:none;}
+  .btn{display:inline-block;margin-top:10px;margin-right:6px;font-size:.82rem;color:#fff;background:var(--ink);padding:7px 12px;border-radius:8px;text-decoration:none;}
+  .btn.secondary{background:#eef3ee;color:#33443a;}
   .source{font-size:.68rem;color:var(--muted);margin-top:6px;}
   footer{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e3e6e2;display:flex;}
   footer a{flex:1;text-align:center;padding:10px 0;font-size:.75rem;color:var(--muted);text-decoration:none;}
@@ -41,11 +44,14 @@
   <p>흩어진 무더위쉼터·은행·마트·편의점을 하나의 지도로 (B안: 기존 인프라 통합형)</p>
 </header>
 <div class="filters" id="filters"></div>
-<div id="map"><svg viewBox="0 0 400 220" width="100%" height="100%">
-  <rect width="400" height="220" fill="#dbe7dd"/>
-  <text x="200" y="20" text-anchor="middle" font-size="11" fill="#5c6b60">지도 영역 (실 배포 시 카카오/네이버 지도 SDK 연동)</text>
-  <g id="pins"></g>
-</svg></div>
+<div id="map">
+  <div id="kakaoMap"></div>
+  <svg id="placeholderMap" viewBox="0 0 400 220" width="100%" height="100%">
+    <rect width="400" height="220" fill="#dbe7dd"/>
+    <text x="200" y="20" text-anchor="middle" font-size="11" fill="#5c6b60">지도 영역 (kakao-config.js에 JS 키를 넣으면 실제 지도로 전환됩니다)</text>
+    <g id="pins"></g>
+  </svg>
+</div>
 <div class="list" id="list"></div>
 
 <footer>
@@ -56,11 +62,12 @@
 <script src="data.js"></script>
 <script type="module">
   import { firebaseReady, fetchPlaces, logVisitClick } from './firebase.js';
+  import { KAKAO_JS_KEY } from './kakao-config.js';
 
   const list = document.getElementById('list');
   const pins = document.getElementById('pins');
   const filtersEl = document.getElementById('filters');
-  const positions = [[60,120],[130,60],[200,150],[260,80],[320,130],[100,180],[350,60]];
+  const positions = [[60,120],[130,60],[200,150],[260,80],[320,130],[100,180],[350,60],[190,40],[300,180],[40,60]];
 
   if (!firebaseReady) {
     document.querySelector('header p').textContent += ' (firebase-config.js 미설정 — 예시 데이터로 표시 중)';
@@ -74,6 +81,69 @@
   }
 
   let activeCategory = 'all';
+  let kakaoReady = false;
+  let kakaoMap = null;
+  const kakaoMarkers = {};
+  const geocodedCoords = {};
+
+  function loadKakaoSDK() {
+    return new Promise((resolve, reject) => {
+      if (!KAKAO_JS_KEY || KAKAO_JS_KEY.startsWith('여기에')) {
+        reject(new Error('카카오 JS 키 미설정'));
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_JS_KEY}&libraries=services&autoload=false`;
+      script.onload = () => window.kakao.maps.load(resolve);
+      script.onerror = () => reject(new Error('카카오맵 SDK 로드 실패'));
+      document.head.appendChild(script);
+    });
+  }
+
+  function cleanAddress(addr) {
+    return addr.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  }
+
+  async function initKakaoMap(places) {
+    try {
+      await loadKakaoSDK();
+    } catch (e) {
+      return false;
+    }
+    document.getElementById('kakaoMap').style.display = 'block';
+    document.getElementById('placeholderMap').style.display = 'none';
+
+    kakaoMap = new kakao.maps.Map(document.getElementById('kakaoMap'), {
+      center: new kakao.maps.LatLng(35.1379, 129.0937),
+      level: 6,
+    });
+
+    const geocoder = new kakao.maps.services.Geocoder();
+    const bounds = new kakao.maps.LatLngBounds();
+    let found = 0;
+
+    await Promise.all(places.map(p => new Promise(resolve => {
+      geocoder.addressSearch(cleanAddress(p.address), (result, status) => {
+        if (status === kakao.maps.services.Status.OK && result.length) {
+          const lat = Number(result[0].y), lng = Number(result[0].x);
+          geocodedCoords[p.id] = { lat, lng };
+          const coords = new kakao.maps.LatLng(lat, lng);
+          const marker = new kakao.maps.Marker({ map: kakaoMap, position: coords, title: p.name });
+          kakao.maps.event.addListener(marker, 'click', () => {
+            location.href = `feedback.html?place=${p.id}`;
+          });
+          kakaoMarkers[p.id] = marker;
+          bounds.extend(coords);
+          found++;
+        }
+        resolve();
+      });
+    })));
+
+    if (found > 0) kakaoMap.setBounds(bounds);
+    kakaoReady = true;
+    return true;
+  }
 
   function isOpenNow(hours) {
     if (!hours) return null;
@@ -95,16 +165,32 @@
     }).join('');
   }
 
+  function updateKakaoMarkerVisibility(filtered) {
+    if (!kakaoReady) return;
+    const visibleIds = new Set(filtered.map(p => p.id));
+    Object.entries(kakaoMarkers).forEach(([id, marker]) => {
+      marker.setMap(visibleIds.has(id) ? kakaoMap : null);
+    });
+  }
+
   function renderPlaces(places) {
     const filtered = activeCategory === 'all' ? places : places.filter(p => p.category === activeCategory);
     list.innerHTML = '';
-    pins.innerHTML = '';
-    filtered.forEach((p, i) => {
-      const meta = CATEGORY_META[p.category] || { label: p.category, icon: '📍', color: '#888' };
-      const [x, y] = positions[i % positions.length];
-      pins.innerHTML += `<circle cx="${x}" cy="${y}" r="7" fill="${meta.color}" stroke="#fff" stroke-width="2"/>
-        <text x="${x}" y="${y-12}" font-size="9" text-anchor="middle" fill="#1b1f1c">${p.name}</text>`;
 
+    if (!kakaoReady) {
+      pins.innerHTML = '';
+      filtered.forEach((p, i) => {
+        const meta = CATEGORY_META[p.category] || { label: p.category, icon: '📍', color: '#888' };
+        const [x, y] = positions[i % positions.length];
+        pins.innerHTML += `<circle cx="${x}" cy="${y}" r="7" fill="${meta.color}" stroke="#fff" stroke-width="2"/>
+          <text x="${x}" y="${y-12}" font-size="9" text-anchor="middle" fill="#1b1f1c">${p.name}</text>`;
+      });
+    } else {
+      updateKakaoMarkerVisibility(filtered);
+    }
+
+    filtered.forEach(p => {
+      const meta = CATEGORY_META[p.category] || { label: p.category, icon: '📍', color: '#888' };
       const open = isOpenNow(p.hours);
       const statusHtml = open === null ? '' :
         `<span class="status ${open ? 'open' : 'closed'}">${open ? '● 이용 가능' : '● 운영 종료'}</span>`;
@@ -113,6 +199,11 @@
         ? '<span class="badge" style="background:#1f8a4c">✓ 실데이터(PoC)</span>'
         : '<span class="badge" style="background:#999">예시 데이터</span>';
 
+      const coords = geocodedCoords[p.id];
+      const kakaoLink = coords
+        ? `<a class="btn secondary" href="https://map.kakao.com/link/to/${encodeURIComponent(p.name)},${coords.lat},${coords.lng}" target="_blank" rel="noopener">카카오맵에서 길찾기 ↗</a>`
+        : '';
+
       const card = document.createElement('div');
       card.className = 'card';
       card.style.borderLeftColor = meta.color;
@@ -120,8 +211,10 @@
         <h3>${meta.icon} ${p.name} <span class="badge" style="background:${meta.color}">${meta.label}</span>${statusHtml}</h3>
         <p class="meta">${verifiedBadge}</p>
         <p class="meta">${p.hours ? '운영시간 ' + p.hours + ' · ' : ''}${p.address}${p.phone ? ' · ' + p.phone : ''}</p>
+        ${p.note ? `<p class="note">⚠ ${p.note}</p>` : ''}
         <div class="tags">${(p.amenities || []).map(a => `<span class="tag">✓ ${a}</span>`).join('')}</div>
-        <a class="btn" href="#" data-place="${p.id}">길찾기 →</a>
+        <a class="btn" href="#" data-place="${p.id}">체크인 후기 남기기 →</a>
+        ${kakaoLink}
         <p class="source">출처: ${p.source || '-'}</p>
       `;
       list.appendChild(card);
@@ -141,7 +234,7 @@
   });
 
   list.addEventListener('click', async (e) => {
-    if (!e.target.matches('.btn')) return;
+    if (!e.target.matches('.btn') || e.target.classList.contains('secondary')) return;
     e.preventDefault();
     const placeId = e.target.dataset.place;
     if (firebaseReady) {
@@ -158,6 +251,7 @@
   }
 
   currentPlaces = await loadPlaces();
+  await initKakaoMap(currentPlaces);
   renderPlaces(currentPlaces);
 </script>
 </body>
