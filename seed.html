@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Firestore 초기 데이터 심기</title>
+<style>
+  body{font-family:"Pretendard","Apple SD Gothic Neo",sans-serif;background:#f6f7f5;color:#1b1f1c;
+       max-width:480px;margin:40px auto;padding:0 16px;text-align:center;}
+  .card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 1px 6px rgba(0,0,0,.08);}
+  button{padding:14px 20px;border:none;border-radius:10px;background:#1f8a4c;color:#fff;font-size:1rem;
+         font-weight:700;cursor:pointer;margin-top:14px;}
+  button:disabled{background:#aab;cursor:not-allowed;}
+  pre{text-align:left;background:#101410;color:#c9f5d8;padding:12px;border-radius:10px;font-size:.75rem;
+      overflow:auto;margin-top:16px;}
+  a{color:#1f8a4c;}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🌱 Firestore 초기 데이터 심기</h1>
+  <p>data.js의 예시 거점(무더위쉼터·은행·마트·CU 편의점)을 Firestore <code>places</code> 컬렉션에 한 번만 넣습니다.<br>
+  ⚠️ 지금은 실제 주소가 아닌 예시 데이터입니다. 실제 48곳 리스트를 확보하면 data.js를 그 값으로 바꾼 뒤 다시 눌러주세요.<br>
+  <b>firebase-config.js</b>를 먼저 채운 뒤 아래 버튼을 눌러주세요. (이미 넣었다면 다시 눌러도 같은 문서를 덮어쓸 뿐 중복 생성되지 않습니다.)</p>
+  <button id="seedBtn">Firestore에 심기</button>
+  <pre id="log">대기 중...</pre>
+  <p><a href="index.html">← 지도로 돌아가기</a></p>
+</div>
+
+<script src="data.js"></script>
+<script type="module">
+  import { firebaseReady, seedPlaces } from './firebase.js';
+
+  const logEl = document.getElementById('log');
+  const btn = document.getElementById('seedBtn');
+
+  if (!firebaseReady) {
+    logEl.textContent = 'firebase-config.js에 apiKey 등 설정값을 먼저 채워주세요.';
+    btn.disabled = true;
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    logEl.textContent = '저장 중...';
+    try {
+      await seedPlaces(PLACES);
+      logEl.textContent = `완료! ${PLACES.length}개 문서를 places 컬렉션에 저장했습니다.\n` +
+        PLACES.map(p => `- ${p.id}: ${p.name}`).join('\n');
+    } catch (err) {
+      logEl.textContent = '오류: ' + err.message;
+    }
+    btn.disabled = false;
+  });
+</script>
+</body>
+</html>

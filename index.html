@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>해봄 기후안심 통합지도</title>
+<style>
+  :root{
+    --green:#1f8a4c; --amber:#e08b1f; --blue:#2b6fd1; --red:#c0392b;
+    --bg:#f6f7f5; --card:#ffffff; --ink:#1b1f1c; --muted:#6b7570;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Pretendard","Apple SD Gothic Neo",sans-serif;background:var(--bg);color:var(--ink);}
+  header{background:var(--green);color:#fff;padding:16px 20px;position:sticky;top:0;z-index:10;box-shadow:0 2px 6px rgba(0,0,0,.15);}
+  header h1{margin:0;font-size:1.15rem;}
+  header p{margin:4px 0 0;font-size:.78rem;opacity:.9;}
+  .filters{display:flex;gap:8px;padding:10px 16px;background:#fff;border-bottom:1px solid #e3e6e2;overflow-x:auto;}
+  .chip{flex:none;font-size:.78rem;padding:6px 12px;border-radius:999px;border:1px solid #d7ddd8;background:#fff;cursor:pointer;white-space:nowrap;}
+  .chip.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+  #map{height:44vh;width:100%;background:#dbe7dd;}
+  .list{padding:12px 16px 80px;}
+  .card{background:var(--card);border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);border-left:6px solid var(--blue);}
+  .card h3{margin:0 0 6px;font-size:1rem;display:flex;align-items:center;gap:8px;}
+  .badge{font-size:.68rem;color:#fff;padding:2px 8px;border-radius:999px;}
+  .status{font-size:.72rem;font-weight:700;margin-left:auto;}
+  .status.open{color:var(--green);}
+  .status.closed{color:var(--red);}
+  .meta{font-size:.82rem;color:var(--muted);margin:2px 0;}
+  .tags{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;}
+  .tag{font-size:.72rem;background:#eef3ee;color:#33443a;padding:3px 8px;border-radius:8px;}
+  .btn{display:inline-block;margin-top:10px;font-size:.82rem;color:#fff;background:var(--ink);padding:7px 12px;border-radius:8px;text-decoration:none;}
+  .source{font-size:.68rem;color:var(--muted);margin-top:6px;}
+  footer{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e3e6e2;display:flex;}
+  footer a{flex:1;text-align:center;padding:10px 0;font-size:.75rem;color:var(--muted);text-decoration:none;}
+  footer a.active{color:var(--green);font-weight:700;}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌤️ 해봄 기후안심 통합지도</h1>
+  <p>흩어진 무더위쉼터·은행·마트·편의점을 하나의 지도로 (B안: 기존 인프라 통합형)</p>
+</header>
+<div class="filters" id="filters"></div>
+<div id="map"><svg viewBox="0 0 400 220" width="100%" height="100%">
+  <rect width="400" height="220" fill="#dbe7dd"/>
+  <text x="200" y="20" text-anchor="middle" font-size="11" fill="#5c6b60">지도 영역 (실 배포 시 카카오/네이버 지도 SDK 연동)</text>
+  <g id="pins"></g>
+</svg></div>
+<div class="list" id="list"></div>
+
+<footer>
+  <a href="index.html" class="active">🗺 통합지도</a>
+  <a href="dashboard.html">📊 커버리지 대시보드</a>
+</footer>
+
+<script src="data.js"></script>
+<script type="module">
+  import { firebaseReady, fetchPlaces, logVisitClick } from './firebase.js';
+
+  const list = document.getElementById('list');
+  const pins = document.getElementById('pins');
+  const filtersEl = document.getElementById('filters');
+  const positions = [[60,120],[130,60],[200,150],[260,80],[320,130],[100,180],[350,60]];
+
+  if (!firebaseReady) {
+    document.querySelector('header p').textContent += ' (firebase-config.js 미설정 — 예시 데이터로 표시 중)';
+  }
+
+  const DEVICE_KEY = 'climatesafe_device_id';
+  let deviceId = localStorage.getItem(DEVICE_KEY);
+  if (!deviceId) {
+    deviceId = 'dev-' + Math.random().toString(36).slice(2, 8);
+    localStorage.setItem(DEVICE_KEY, deviceId);
+  }
+
+  let activeCategory = 'all';
+
+  function isOpenNow(hours) {
+    if (!hours || hours.includes('24시간')) return true;
+    const m = hours.match(/(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})/);
+    if (!m) return null;
+    const now = new Date();
+    const cur = now.getHours() * 60 + now.getMinutes();
+    const start = Number(m[1]) * 60 + Number(m[2]);
+    const end = Number(m[3]) * 60 + Number(m[4]);
+    return cur >= start && cur <= end;
+  }
+
+  function renderFilters() {
+    const cats = ['all', ...Object.keys(CATEGORY_META)];
+    filtersEl.innerHTML = cats.map(c => {
+      const label = c === 'all' ? '전체' : `${CATEGORY_META[c].icon} ${CATEGORY_META[c].label}`;
+      return `<button class="chip ${c === activeCategory ? 'active' : ''}" data-cat="${c}">${label}</button>`;
+    }).join('');
+  }
+
+  function renderPlaces(places) {
+    const filtered = activeCategory === 'all' ? places : places.filter(p => p.category === activeCategory);
+    list.innerHTML = '';
+    pins.innerHTML = '';
+    filtered.forEach((p, i) => {
+      const meta = CATEGORY_META[p.category] || { label: p.category, icon: '📍', color: '#888' };
+      const [x, y] = positions[i % positions.length];
+      pins.innerHTML += `<circle cx="${x}" cy="${y}" r="7" fill="${meta.color}" stroke="#fff" stroke-width="2"/>
+        <text x="${x}" y="${y-12}" font-size="9" text-anchor="middle" fill="#1b1f1c">${p.name}</text>`;
+
+      const open = isOpenNow(p.hours);
+      const statusHtml = open === null ? '' :
+        `<span class="status ${open ? 'open' : 'closed'}">${open ? '● 이용 가능' : '● 운영 종료'}</span>`;
+
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.borderLeftColor = meta.color;
+      card.innerHTML = `
+        <h3>${meta.icon} ${p.name} <span class="badge" style="background:${meta.color}">${meta.label}</span>${statusHtml}</h3>
+        <p class="meta">운영시간 ${p.hours} · ${p.address}</p>
+        <div class="tags">${(p.amenities || []).map(a => `<span class="tag">✓ ${a}</span>`).join('')}</div>
+        <a class="btn" href="#" data-place="${p.id}">길찾기 →</a>
+        <p class="source">출처: ${p.source || '-'}</p>
+      `;
+      list.appendChild(card);
+    });
+
+    if (!filtered.length) {
+      list.innerHTML = '<p class="meta">이 카테고리에는 아직 등록된 장소가 없습니다.</p>';
+    }
+  }
+
+  renderFilters();
+  filtersEl.addEventListener('click', (e) => {
+    if (!e.target.matches('.chip')) return;
+    activeCategory = e.target.dataset.cat;
+    renderFilters();
+    renderPlaces(currentPlaces);
+  });
+
+  list.addEventListener('click', async (e) => {
+    if (!e.target.matches('.btn')) return;
+    e.preventDefault();
+    const placeId = e.target.dataset.place;
+    if (firebaseReady) {
+      await logVisitClick({ placeId, deviceId });
+    }
+    location.href = `feedback.html?place=${placeId}`;
+  });
+
+  let currentPlaces = [];
+  async function loadPlaces() {
+    if (!firebaseReady) return PLACES;
+    const fromFirestore = await fetchPlaces();
+    return (fromFirestore && fromFirestore.length) ? fromFirestore : PLACES;
+  }
+
+  currentPlaces = await loadPlaces();
+  renderPlaces(currentPlaces);
+</script>
+</body>
+</html>

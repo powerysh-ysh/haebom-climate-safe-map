@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 실증 기간(약 2~4주) 동안만 열어두는 테스트 모드 규칙.
+    // 만료일(REPLACE_WITH_EXPIRY_DATE)까지는 누구나 읽기/쓰기 가능 — Firebase 콘솔 기본 "테스트 모드" 규칙과 동일한 형태입니다.
+    // 실증이 끝나면 이 파일을 지우고 콘솔에서 "잠금 모드"로 교체하거나, 아래 주석 처리된 운영용 규칙으로 바꿔주세요.
+    match /{document=**} {
+      allow read, write: if request.time < timestamp.date(2026, 10, 18); // 실증 종료일에 맞춰 수정
+    }
+
+    // ── 실증 종료 후 적용할 운영용 규칙 예시 (지금은 비활성) ──────────────────
+    // match /places/{placeId} {
+    //   allow read: if true;      // 통합지도는 누구나 조회 (무더위쉼터/은행/마트/편의점)
+    //   allow write: if false;    // 거점 정보 수정은 관리자 콘솔/공공데이터 연동 배치에서만
+    // }
+    // match /visits/{visitId} {
+    //   allow read: if true;                    // 대시보드 조회용 (길찾기 클릭 로그)
+    //   allow create: if request.resource.data.keys().hasAll(['placeId','deviceId','ts'])
+    //                 && request.resource.data.placeId is string
+    //                 && request.resource.data.deviceId is string;
+    //   allow update, delete: if false;
+    // }
+    // match /feedback/{feedbackId} {
+    //   allow read: if true;                    // 대시보드 조회용 (만족도 응답)
+    //   allow create: if request.resource.data.keys().hasAll(['placeId','deviceId','score'])
+    //                 && request.resource.data.score is int;
+    //   allow update, delete: if false;
+    // }
+  }
+}
